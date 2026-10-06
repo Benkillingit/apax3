@@ -704,7 +704,7 @@ def ui_server(port):
                     out = {"result": hive_sync(brain)}
                 elif self.path == "/api/door":
                     repo = brain.get("door", {}).get("repo") or \
-                        "https://github.com/Benkillingit/apax3.git"
+                        "git@github.com:Benkillingit/apax3.git"
                     out = {"result": door_poll(brain, repo)
                            or "door: nothing waiting"}
                 else:
@@ -776,7 +776,7 @@ def main():
             print("  " + backup_sync(brain, arg))
         elif low == "/door":
             repo = brain.get("door", {}).get("repo") or \
-                "https://github.com/Benkillingit/apax3.git"
+                "git@github.com:Benkillingit/apax3.git"
             msg = door_poll(brain, repo)
             print("  " + (msg or "door: nothing waiting"))
         elif low.startswith("/door "):
@@ -816,7 +816,7 @@ if __name__ == "__main__":
         ui_server(int(sys.argv[2]) if len(sys.argv) > 2 else 8080)
     elif len(sys.argv) > 1 and sys.argv[1] == "--door":
         repo = (sys.argv[2] if len(sys.argv) > 2
-                else "https://github.com/Benkillingit/apax3.git")
+                else "git@github.com:Benkillingit/apax3.git")
         door_loop(repo)
     else:
         main()
