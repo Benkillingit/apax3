@@ -99,3 +99,9 @@ The web UI works at localhost:8080 in any mobile browser.
 2. Pick your SD card, write. (Ctrl+Shift+X = enable SSH/wifi if you want headless)
 3. Boot the Pi, then the one line that makes it APAX OS:
    `cd ~ && git clone https://github.com/Benkillingit/apax3.git && bash apax3/apax-os.sh`
+
+## One-liner install
+
+`curl -sL https://raw.githubusercontent.com/Benkillingit/apax3/main/install-os.sh | bash`
+
+Non-interactive: append ` -y`. Rollback everything: `bash apax-os.sh --undo` (brain untouched). Updates: the daemon git-pulls and restarts itself — every push to this repo is a new OS version.
