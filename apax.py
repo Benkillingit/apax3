@@ -37,7 +37,7 @@ PIN_RE = re.compile(r"pin\s*(\d+)\s*(on|off|high|low)")
 URL_RE = re.compile(r"https?://\S+", re.I)
 RUN_RE = re.compile(r"^run\s+(.+)$", re.I)
 
-CAPS = ("internet", "cmd", "gpio")
+CAPS = ("internet", "cmd", "gpio", "hive")
 
 
 # ---------------------------------------------------------------- brain io
@@ -57,7 +57,8 @@ def new_brain():
         "markov": {},           # word order it has heard (grows unbounded)
         "vocab": {},            # word -> times seen
         "questions": {},        # words it has asked about
-        "caps": {"internet": True, "cmd": False, "gpio": False},
+        "caps": {"internet": True, "cmd": False, "gpio": False, "hive": False},
+        "hive": {"repo": "", "node": ""},
         "links": [],            # urls discovered while reading
         "reads": 0,
         "heard": 0,
@@ -300,6 +301,99 @@ def respond(brain, text):
     return None  # silent until it has material to think with
 
 
+
+
+# ---------------------------------------------------------------- hive mind
+# Collective brain: each APAX node pushes its brain snapshot to a shared
+# git repo and absorbs every other node's snapshot. Union merge, no conflicts.
+
+def hive_merge(dst, src):
+    n = 0
+    for f in src.get("facts", []):
+        if f not in dst["facts"]:
+            dst["facts"].append(f); n += 1
+    for w, c in src.get("vocab", {}).items():
+        if w not in dst["vocab"]:
+            dst["vocab"][w] = 0; n += 1
+        dst["vocab"][w] += c
+    m = dst["markov"]
+    for a, d in src.get("markov", {}).items():
+        for b, e in d.items():
+            for c, cnt in e.items():
+                m.setdefault(a, {}).setdefault(b, {})
+                if c not in m[a][b]:
+                    n += 1
+                m[a][b][c] = m[a][b].get(c, 0) + cnt
+    for l in src.get("links", []):
+        if l not in dst["links"]:
+            dst["links"].append(l); n += 1
+    for q in src.get("questions", {}):
+        if q not in dst["questions"]:
+            dst["questions"][q] = True; n += 1
+    return n
+
+
+def hive_snapshot(brain):
+    snap = {k: v for k, v in brain.items() if k not in ("caps", "hive")}
+    return snap
+
+
+def hive_sync(brain):
+    import subprocess
+    import shutil
+
+    repo = brain.get("hive", {}).get("repo")
+    if not repo:
+        return "no hive joined yet: /hive join <repo-url>"
+    if not brain["hive"].get("node"):
+        brain["hive"]["node"] = "node-" + os.uname().nodename.replace(" ", "-") \
+            + "-" + format(random.getrandbits(16), "04x")
+    node = brain["hive"]["node"]
+    hdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".hive")
+
+    def git(*args):
+        return subprocess.run(
+            ["git", "-C", hdir, "-c", "user.email=apax@localhost",
+             "-c", "user.name=" + node] + list(args),
+            capture_output=True)
+
+    if not os.path.exists(os.path.join(hdir, ".git")):
+        r = subprocess.run(["git", "clone", repo, hdir], capture_output=True)
+        if r.returncode != 0:
+            return "clone failed: " + r.stderr.decode()[:200]
+    else:
+        git("pull", "--rebase", "-q")  # ok to fail if never pushed
+
+    # absorb every other node's snapshot
+    learned = 0
+    nodes = 0
+    import glob
+    for path in glob.glob(os.path.join(hdir, "apax-*.json")):
+        other = os.path.basename(path)[len("apax-"):-5]
+        if other == node:
+            continue
+        try:
+            with open(path) as f:
+                snap = json.load(f)
+            learned += hive_merge(brain, snap)
+            nodes += 1
+        except Exception:
+            pass
+
+    # push our snapshot
+    with open(os.path.join(hdir, f"apax-{node}.json"), "w") as f:
+        json.dump(hive_snapshot(brain), f)
+    git("add", "-A")
+    git("commit", "-q", "-m", f"{node} sync")
+    p = git("push", "-q")
+    if p.returncode != 0:
+        return ("absorbed %d things from %d nodes, but push failed: %s "
+                "(does the hive repo exist? does this machine have push "
+                "access?)" % (learned, nodes, p.stderr.decode()[:200]))
+    return (f"hive sync done. learned {learned} things from {nodes} "
+            f"other nodes. pushed mine as {node}.")
+
+
 def status(brain):
     caps = ", ".join(f"{c}:{'ON' if on else 'LOCKED'}"
                      for c, on in brain["caps"].items())
@@ -336,6 +430,24 @@ def main():
         elif low == "/brain":
             print(json.dumps(brain, indent=1)[:3000])
             save = False
+        elif low.startswith("/hive "):
+            cmd = low[6:].strip()
+            if cmd.startswith("join "):
+                brain["hive"]["repo"] = cmd[5:].strip()
+                brain["said"] += 1
+                print("  [hive joined: " + brain["hive"]["repo"] + "]")
+            elif cmd == "sync":
+                if not brain["caps"].get("hive"):
+                    print("  " + locked_reply(brain, "hive"))
+                else:
+                    print("  " + hive_sync(brain))
+            elif cmd == "status":
+                h = brain.get("hive", {})
+                print(f"  repo: {h.get('repo') or '(none)'}  "
+                      f"node: {h.get('node') or '(unassigned)'}  "
+                      f"{'ON' if brain['caps'].get('hive') else 'LOCKED'}")
+            else:
+                print("  usage: /hive join <repo-url> | /hive sync | /hive status")
         elif low == "/caps":
             for c, on in brain["caps"].items():
                 print(f"  {c}: {'GRANTED' if on else 'LOCKED'}")
