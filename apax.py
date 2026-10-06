@@ -23,6 +23,7 @@ Run:  python3 apax.py        (Raspberry Pi 3 / Pi OS, pure stdlib)
 """
 
 import json
+import sys
 import os
 import random
 import time
@@ -394,6 +395,30 @@ def cleanup_files():
             freed += os.path.getsize(junk)
             os.remove(junk)
     return freed
+
+
+def daemon():
+    """Background janitor: compacts the brain, deletes unneeded files,
+    watches disk. Runs forever, logs to apax-daemon.log (self-rotated)."""
+    import time
+    import shutil
+    log = "apax-daemon.log"
+    while True:
+        brain = load_brain()
+        save_brain(brain)          # save_brain auto-compacts when big
+        freed = cleanup_files()
+        du = shutil.disk_usage(os.path.dirname(os.path.abspath(__file__)))
+        line = (time.strftime("%F %T") +
+                f" | brain ok | {freed // 1000}kb freed | "
+                f"{du.free // (2 ** 20)}mb disk free\n")
+        if os.path.exists(log) and os.path.getsize(log) > 20_000:
+            os.remove(log)         # own log, own rules
+        with open(log, "a") as f:
+            f.write(line)
+        if os.environ.get("APAX_DAEMON_ONCE"):
+            print(line.strip())
+            return
+        time.sleep(1800)
 
 
 def locked_reply(brain, cap):
@@ -1019,7 +1044,9 @@ def main():
     save_brain(brain)
 
 
-if __name__ == "__main__":
+if "--daemon" in sys.argv:
+    daemon()
+elif __name__ == "__main__":
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == "--ui":
         ui_server(int(sys.argv[2]) if len(sys.argv) > 2 else 8080)
