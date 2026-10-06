@@ -115,4 +115,32 @@ if ask "install the APAX ask-bar (Ctrl+Alt+A = ask apax from any app)?"; then
     echo "[apax os] ctrl+alt+a = talk to apax from anywhere"
 fi
 
+# 7. windows + steamos imports — what can honestly be ported
+if ask "import windows + steamos features (snap windows, game-mode fullscreen launcher, retroarch)?"; then
+    # windows: edge-snap windows (drag a window to the screen edge = half-screen, like windows)
+    xfconf-query -c xfwm4 -p /general/snap_to_border -n -t bool -s true 2>/dev/null || true
+    xfconf-query -c xfwm4 -p /general/snap_windows -n -t bool -s true 2>/dev/null || true
+    # steamos: the game. retroarch = emulators, pegasus = big-picture game mode (rpi3 build)
+    sudo apt install -y -qq retroarch
+    PEGURL=$(curl -s https://api.github.com/repos/mmatyas/pegasus-frontend/releases/latest \
+        | grep -o "https://[^\"]*rpi3-static.zip" | head -1)
+    if [ -n "$PEGURL" ]; then
+        wget -q "$PEGURL" -O /tmp/pegasus.zip && \
+        mkdir -p ~/.local/opt && unzip -o -q /tmp/pegasus.zip -d ~/.local/opt/pegasus
+        BIN=$(find ~/.local/opt/pegasus -name "pegasus-fe" -type f | head -1)
+        [ -n "$BIN" ] && chmod +x "$BIN" && \
+        cat > ~/Desktop/apax-game-mode.desktop <<GMD
+[Desktop Entry]
+Type=Application
+Name=APAX Game Mode
+Exec=$BIN
+Icon=$(pwd)/apax-logo.png
+GMD
+        chmod +x ~/Desktop/apax-game-mode.desktop
+        echo "[apax os] game mode ready - desktop icon, controller-friendly, fullscreen"
+    else
+        echo "[apax os] pegasus download failed - retroarch still installed, run: retroarch"
+    fi
+fi
+
 echo "[apax os] done. reboot to see it."
