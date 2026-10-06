@@ -336,6 +336,8 @@ def hive_snapshot(brain):
     snap = {k: v for k, v in brain.items()
             if k not in ("caps", "hive", "markov", "questions",
                          "owner_words")}
+    snap["last_seen"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    snap["host"] = os.uname().nodename
     snap["facts"] = [f for f in snap["facts"]
                      if len(f) == 3 or f[3] != "mine"]
     snap["vocab"] = {w: c for w, c in snap["vocab"].items()
