@@ -1,11 +1,15 @@
 #!/bin/bash
 # APAX 3.0 — self-configuring install for Raspberry Pi (or any Linux).
-# One command:  bash install.sh
-# Asks before every system change. Nothing happens without your OK.
+#   bash install.sh        -> asks before every change
+#   bash install.sh -y     -> auto-yes everything (your own machine)
 set -e
 cd "$(dirname "$0")"
 
-ask() {  # ask "question" -> returns 0 if yes
+AUTO=0
+[ "$1" = "-y" ] && AUTO=1
+
+ask() {  # ask "question" -> returns 0 if yes (or auto-yes with -y)
+    if [ $AUTO = 1 ]; then echo "[apax] (auto-yes) $1"; return 0; fi
     read -p "[apax] $1 (y/n) " a
     [ "$a" = "y" ] || [ "$a" = "Y" ]
 }
