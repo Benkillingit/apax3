@@ -4,7 +4,22 @@
 set -e
 cd "$(dirname "$0")"
 
-ask() { read -p "[apax os] $1 (y/n) " a; [ "$a" = "y" ] || [ "$a" = "Y" ]; }
+ASSUME_YES=0
+[ "$1" = "-y" ] && ASSUME_YES=1
+ask() { [ "$ASSUME_YES" = 1 ] && return 0; read -p "[apax os] $1 (y/n) " a; [ "$a" = "y" ] || [ "$a" = "Y" ]; }
+
+if [ "$1" = "--undo" ]; then
+    echo "[apax os] undo: removing the apax layer (brain + kde untouched)"
+    systemctl --user disable --now apax-daemon 2>/dev/null
+    rm -f ~/.config/systemd/user/apax-daemon.service
+    systemctl --user daemon-reload 2>/dev/null
+    rm -f ~/.config/autostart/apax.desktop ~/Desktop/apax*.desktop \
+          ~/Desktop/apax-logo.png ~/bin/apax-ask
+    xfconf-query -c xfce4-keyboard-shortcuts -p '/commands/custom/<Primary><Alt>a' \
+        -n -t string -s "" 2>/dev/null || true
+    echo "[apax os] undone. reboot for a clean desktop. brain safe in apax3/apax_brain.json"
+    exit 0
+fi
 
 echo "[apax os] v2: windows-style desktop + app translator + max video"
 
@@ -141,6 +156,30 @@ GMD
     else
         echo "[apax os] pegasus download failed - retroarch still installed, run: retroarch"
     fi
+fi
+
+# 8. easier everywhere — remote control from phone/pc + files over network
+if ask "install remote access (vnc: control the pi screen from your phone) + file share (samba: pi shows up like a network drive on windows pcs)?"; then
+    sudo apt install -y -qq x11vnc samba
+    mkdir -p ~/.config/autostart
+    cat > ~/.config/autostart/apax-vnc.desktop <<VNC
+[Desktop Entry]
+Type=Application
+Name=APAX VNC
+Exec=x11vnc -forever -shared
+VNC
+    (echo apax; echo apax) | sudo smbpasswd -s -a "$USER" 2>/dev/null || true
+    grep -q "\[apax\]" /etc/samba/smb.conf 2>/dev/null || sudo tee -a /etc/samba/smb.conf <<SMB
+[apax]
+   path = HOMEPLACEHOLDER
+   browseable = yes
+   read only = no
+SMB
+    sudo sed -i "s|HOMEPLACEHOLDER|$HOME|" /etc/samba/smb.conf 2>/dev/null || true
+    sudo systemctl restart smbd 2>/dev/null || true
+    IP=$(hostname -I | awk '{print $1}')
+    echo "[apax os] remote: any vnc app -> $IP (password = your pi login)"
+    echo "[apax os] files: on a windows pc -> \\\\$IP\\\\apax (user = $USER, pass = apax)"
 fi
 
 echo "[apax os] done. reboot to see it."
