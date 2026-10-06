@@ -182,4 +182,21 @@ SMB
     echo "[apax os] files: on a windows pc -> \\\\$IP\\\\apax (user = $USER, pass = apax)"
 fi
 
+# 9. internet host — apax reachable from anywhere via a relay server
+if ask "host apax on the internet? (public https url via localhost.run relay; key-protected)"; then
+    [ -f apax-webkey.txt ] || head -c 16 /dev/urandom | xxd -p | head -c 24 > apax-webkey.txt
+    chmod +x apax-tunnel.sh
+    mkdir -p ~/.config/autostart
+    cat > ~/.config/autostart/apax-tunnel.desktop <<TNL
+[Desktop Entry]
+Type=Application
+Name=APAX Tunnel
+Exec=xfce4-terminal --command="$(pwd)/apax-tunnel.sh"
+TNL
+    echo "[apax os] key (keep private): $(cat apax-webkey.txt)"
+    echo "[apax os] after reboot+login the tunnel prints a https URL like https://xxxx.loca.run"
+    echo "[apax os] open it from ANY device as:  <url>/?k=$(cat apax-webkey.txt)"
+    echo "[apax os] log = that terminal window. close it = tunnel stops."
+fi
+
 echo "[apax os] done. reboot to see it."
