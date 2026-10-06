@@ -104,4 +104,15 @@ SVC
     echo "[apax os] daemon live. log: apax-daemon.log"
 fi
 
+# 6. ask-bar — apax IS the os: ctrl+alt+a anywhere, type anything, he answers
+if ask "install the APAX ask-bar (Ctrl+Alt+A = ask apax from any app)?"; then
+    sudo apt install -y -qq zenity libnotify-bin
+    chmod +x apax-ask.sh
+    mkdir -p ~/bin && cp apax-ask.sh ~/bin/apax-ask
+    xfconf-query -c xfce4-keyboard-shortcuts -p '/commands/custom/<Primary><Alt>a' \
+        -n -t string -s "$HOME/bin/apax-ask" 2>/dev/null || \
+        echo "[apax os] hotkey bind failed - run apax-ask manually from terminal"
+    echo "[apax os] ctrl+alt+a = talk to apax from anywhere"
+fi
+
 echo "[apax os] done. reboot to see it."
