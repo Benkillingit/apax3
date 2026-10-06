@@ -562,6 +562,161 @@ def door_loop(repo):
         time.sleep(60)
 
 
+
+
+# ---------------------------------------------------------------- apax ui
+# Settings app for the Pi screen: python3 apax.py --ui [port]
+# Zero dependencies (stdlib http.server). Open http://<pi-ip>:8080
+
+UI_PAGE = """<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>APAX</title><style>
+body{font-family:monospace;background:#111;color:#0f0;max-width:640px;
+margin:16px auto;padding:0 12px}
+h1{font-size:1.3em} #stats{color:#0ff;white-space:pre}
+button,select,input{background:#000;color:#0f0;border:1px solid #0f0;
+font-family:monospace;padding:6px 10px;margin:2px}
+#chat{border:1px solid #0f0;padding:8px;height:180px;overflow-y:auto;
+margin:8px 0}
+.msg{margin:2px 0} .you{color:#fff} .apax{color:#0f0}
+.row{margin:6px 0} label{display:block;color:#0ff}
+</style></head><body>
+<h1>APAX 3.0</h1><div id="stats">loading...</div>
+<div id="chat"></div>
+<div class="row"><input id="txt" placeholder="say something" size="46">
+<button onclick="say()">send</button></div>
+<div class="row"><label>capabilities</label>
+<select id="cap"><option>cmd</option><option>gpio</option>
+<option>internet</option><option>hive</option></select>
+<button onclick="cap(1)">grant</button>
+<button onclick="cap(0)">revoke</button></div>
+<div class="row"><label>maintenance</label>
+<button onclick="act('backup')">backup</button>
+<button onclick="act('hive')">hive sync</button>
+<button onclick="act('door')">check door</button></div>
+<div class="row"><label>known facts</label>
+<div id="facts" style="color:#0ff"></div></div>
+<script>
+const esc = s => String(s).replace(/[<>&]/g,
+  c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+async function api(path, body){
+  const r = await fetch(path, {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(body || {})});
+  return r.json();
+}
+async function refresh(){
+  const s = await api('/api/status');
+  document.getElementById('stats').textContent =
+    'words:' + s.words + '  facts:' + s.facts + '  said:' + s.said +
+    '  reads:' + s.reads + '\n' + s.caps;
+  document.getElementById('facts').innerHTML =
+    s.fact_list.map(f => esc(f.join(' '))).join('<br>') || '(none yet)';
+}
+function addmsg(who, text){
+  const c = document.getElementById('chat');
+  c.innerHTML += '<div class="msg ' + who + '">' + esc(text) + '</div>';
+  c.scrollTop = c.scrollHeight;
+}
+async function say(){
+  const t = document.getElementById('txt').value.trim();
+  if(!t) return;
+  document.getElementById('txt').value = '';
+  addmsg('you', t);
+  const r = await api('/api/say', {text: t});
+  addmsg('apax', r.reply);
+  refresh();
+}
+async function cap(on){
+  const c = document.getElementById('cap').value;
+  const r = await api('/api/cap', {cap: c, on: !!on});
+  addmsg('apax', r.result); refresh();
+}
+async function act(k){
+  const r = await api('/api/' + k);
+  addmsg('apax', r.result); refresh();
+}
+document.getElementById('txt').addEventListener('keydown',
+  e => { if(e.key === 'Enter') say(); });
+refresh();
+</script></body></html>"""
+
+
+def ui_server(port):
+    import threading
+    from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+    lock = threading.Lock()
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass  # quiet
+
+        def _send(self, obj, code=200):
+            raw = (obj if isinstance(obj, str)
+                   else json.dumps(obj)).encode()
+            self.send_response(code)
+            self.send_header("Content-Type",
+                             "text/html" if isinstance(obj, str)
+                             else "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def do_GET(self):
+            if self.path == "/":
+                self._send(UI_PAGE)
+            else:
+                self._send({"error": "not found"}, 404)
+
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length", 0) or 0)
+            try:
+                body = json.loads(self.rfile.read(n) or b"{}")
+            except Exception:
+                body = {}
+            with lock:
+                brain = load_brain()
+                if self.path == "/api/status":
+                    caps = "  ".join(
+                        f"{c}:{'ON' if on else 'LOCKED'}"
+                        for c, on in brain["caps"].items())
+                    out = {"words": len(brain["vocab"]),
+                           "facts": len(brain["facts"]),
+                           "said": brain.get("said", 0),
+                           "reads": brain.get("reads", 0),
+                           "caps": caps,
+                           "fact_list": brain["facts"][-30:]}
+                elif self.path == "/api/say":
+                    reply = respond(brain, str(body.get("text", "")))
+                    out = {"reply": reply or "(listening...)"}
+                elif self.path == "/api/cap":
+                    c = str(body.get("cap", ""))
+                    if c in brain["caps"]:
+                        brain["caps"][c] = bool(body.get("on"))
+                        out = {"result": c + (" granted."
+                                             if body.get("on")
+                                             else " revoked.")}
+                    else:
+                        out = {"result": "unknown capability"}
+                elif self.path == "/api/backup":
+                    out = {"result": backup_sync(brain)}
+                elif self.path == "/api/hive":
+                    out = {"result": hive_sync(brain)}
+                elif self.path == "/api/door":
+                    repo = brain.get("door", {}).get("repo") or \
+                        "https://github.com/Benkillingit/apax3.git"
+                    out = {"result": door_poll(brain, repo)
+                           or "door: nothing waiting"}
+                else:
+                    out = {"error": "not found"}
+                save_brain(brain)
+            self._send(out)
+
+    print(f"apax ui: open http://localhost:{port} "
+          f"(or http://<pi-ip>:{port} from your phone)")
+    ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
+
+
 def status(brain):
     caps = ", ".join(f"{c}:{'ON' if on else 'LOCKED'}"
                      for c, on in brain["caps"].items())
@@ -657,7 +812,9 @@ def main():
 
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) > 1 and sys.argv[1] == "--door":
+    if len(sys.argv) > 1 and sys.argv[1] == "--ui":
+        ui_server(int(sys.argv[2]) if len(sys.argv) > 2 else 8080)
+    elif len(sys.argv) > 1 and sys.argv[1] == "--door":
         repo = (sys.argv[2] if len(sys.argv) > 2
                 else "https://github.com/Benkillingit/apax3.git")
         door_loop(repo)
