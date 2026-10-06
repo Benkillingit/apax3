@@ -184,7 +184,13 @@ fi
 
 # 9. internet host — apax reachable from anywhere via a relay server
 if ask "host apax on the internet? (public https url via localhost.run relay; key-protected)"; then
-    [ -f apax-webkey.txt ] || head -c 16 /dev/urandom | xxd -p | head -c 24 > apax-webkey.txt
+    # key choice: y = key-protected, n = open to anyone (caps stay locked)
+    read -p "[apax os] require an access key? (n = anyone with the link can talk to apax) " kq
+    if [ "$kq" = "y" ] || [ "$kq" = "Y" ]; then
+        [ -f apax-webkey.txt ] || head -c 16 /dev/urandom | xxd -p | head -c 24 > apax-webkey.txt
+    else
+        rm -f apax-webkey.txt
+    fi
     chmod +x apax-tunnel.sh
     mkdir -p ~/.config/autostart
     cat > ~/.config/autostart/apax-tunnel.desktop <<TNL
@@ -193,9 +199,13 @@ Type=Application
 Name=APAX Tunnel
 Exec=xfce4-terminal --command="$(pwd)/apax-tunnel.sh"
 TNL
-    echo "[apax os] key (keep private): $(cat apax-webkey.txt)"
+    if [ -f apax-webkey.txt ]; then
+        echo "[apax os] key: $(cat apax-webkey.txt)"
+        echo "[apax os] open from any device: <url>/?k=$(cat apax-webkey.txt)"
+    else
+        echo "[apax os] PUBLIC MODE: anyone with the link can talk to apax (caps stay locked)"
+    fi
     echo "[apax os] after reboot+login the tunnel prints a https URL like https://xxxx.loca.run"
-    echo "[apax os] open it from ANY device as:  <url>/?k=$(cat apax-webkey.txt)"
     echo "[apax os] log = that terminal window. close it = tunnel stops."
 fi
 
