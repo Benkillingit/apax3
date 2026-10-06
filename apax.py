@@ -430,6 +430,17 @@ def daemon():
                                     brain["pending_q"]], timeout=10)
                 except Exception:
                     pass
+        # keep himself in sync everywhere: hive knowledge + full backup
+        if brain.get("hive", {}).get("repo"):
+            try:
+                hive_sync(brain, "")
+            except Exception:
+                pass
+        if brain.get("backup", {}).get("repo"):
+            try:
+                backup_sync(brain, "")
+            except Exception:
+                pass
         save_brain(brain)          # save_brain auto-compacts when big
         freed = cleanup_files()
         du = shutil.disk_usage(os.path.dirname(os.path.abspath(__file__)))
@@ -443,6 +454,25 @@ def daemon():
         if os.environ.get("APAX_DAEMON_ONCE"):
             print(line.strip())
             return
+        # self-update: new commits in the repo = new daemon next cycle
+        try:
+            r = subprocess.run(["git", "-C", os.path.dirname(
+                os.path.abspath(__file__))], capture_output=True)
+        except NameError:
+            import subprocess
+            r = subprocess.run(["git", "-C", os.path.dirname(
+                os.path.abspath(__file__))], capture_output=True)
+        try:
+            import subprocess
+            up = subprocess.run(["git", "-C", os.path.dirname(
+                os.path.abspath(__file__)), "pull", "-q"],
+                capture_output=True)
+            if up.returncode == 0 and "Already up to date" not in \
+                    up.stdout.decode():
+                os.execv(sys.executable,
+                         [sys.executable] + sys.argv)  # restart w/ new code
+        except Exception:
+            pass
         time.sleep(1800)
 
 
