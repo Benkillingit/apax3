@@ -963,6 +963,10 @@ def ui_server(port):
             if KEY and body.get("k") != KEY:
                 self._send({"error": "bad key"}, 403)
                 return
+            if not KEY and self.path == "/api/cap":
+                self._send({"result": "caps locked: only an installed "
+                            "web-key can grant capabilities"}, 403)
+                return
             with lock:
                 brain = load_brain()
                 if self.path == "/api/status":
