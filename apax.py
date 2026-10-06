@@ -62,6 +62,7 @@ def new_brain():
         "questions": {},        # words it has asked about
         "caps": {"internet": True, "ask": False, "cmd": False,
                   "gpio": False, "hive": False},
+        "mode": "local",   # local = brain only, web = full reach
         "hive": {"repo": "", "node": ""},
         "backup": {"repo": ""},
         "links": [],            # urls discovered while reading
@@ -319,9 +320,25 @@ def respond(brain, text):
     learn_markov(brain, text)
 
     # ---- capability requests: gated ----
+    # ---- mode switch: local <-> web (two AIs, one brain) ----
+    low = text.lower().strip()
+    if low in ("go web", "web mode", "go online"):
+        brain["mode"] = "web"
+        brain["said"] += 1
+        return ("web mode. i have full reach now: reading pages, "
+                "asking other ais, running what you granted.")
+    if low in ("go local", "local mode", "go offline"):
+        brain["mode"] = "local"
+        brain["said"] += 1
+        return "local mode. just you and my brain now. everything i know is stored and mine."
+
+    web = brain.get("mode", "local") == "web"
+
     m = ASK_RE.match(text.strip())
     if m:
         brain["said"] += 1
+        if not web:
+            return "i'm local. say 'go web' and i can ask other minds."
         if not brain["caps"].get("ask"):
             return locked_reply(brain, "ask")
         return cap_ask(brain, m.group(1), m.group(2))
@@ -329,12 +346,16 @@ def respond(brain, text):
     m = re.search(r"read\s+(https?://\S+)", text, re.I)
     if m:
         brain["said"] += 1
+        if not web:
+            return "i'm local. say 'go web' and i can read pages."
         if not brain["caps"].get("internet"):
             return locked_reply(brain, "internet")
         return cap_internet_read(brain, m.group(1))
 
     if re.match(r"^\s*(read more|read another)\b", text.lower()):
         brain["said"] += 1
+        if not web:
+            return "i'm local. say 'go web' first."
         if not brain["caps"].get("internet"):
             return locked_reply(brain, "internet")
         if not brain["links"]:
@@ -804,7 +825,8 @@ def ui_server(port):
 def status(brain):
     caps = ", ".join(f"{c}:{'ON' if on else 'LOCKED'}"
                      for c, on in brain["caps"].items())
-    return (f"words: {len(brain['vocab'])}  facts: {len(brain['facts'])}  "
+    mode = brain.get("mode", "local")
+    return (f"mode: {mode}  words: {len(brain['vocab'])}  facts: {len(brain['facts'])}  "
             f"questions: {len(brain['questions'])}  "
             f"heard: {brain['heard']}  said: {brain['said']}  "
             f"reads: {brain['reads']}  links: {len(brain['links'])}  "
