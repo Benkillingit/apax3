@@ -456,6 +456,112 @@ def backup_sync(brain, arg=""):
     return msg
 
 
+
+
+def door_execute(brain, cmd):
+    """Run one back-door command. Dangerous stuff still respects the
+    capability gates (/grant) — the door is not a bypass."""
+    low = cmd.strip().lower()
+    if low == "status":
+        return status(brain)
+    if low.startswith("read "):
+        url = cmd.strip()[5:].strip()
+        if not brain["caps"].get("internet"):
+            return "internet is locked"
+        return cap_internet_read(brain, url)
+    if low.startswith("say "):
+        r = respond(brain, cmd.strip()[4:].strip())  # talk to it
+        return r or "(no reply yet — still learning)"
+    if low.startswith("learn "):
+        learn_fact(brain, cmd.strip()[6:].strip(), mine=True)
+        return "learned."
+    if low == "backup":
+        return backup_sync(brain)
+    if low == "hive":
+        return hive_sync(brain)
+    if low.startswith("cmd "):
+        if not brain["caps"].get("cmd"):
+            return "cmd is locked (no /grant)"
+        return cap_cmd_run(brain, cmd.strip()[4:].strip())
+    if low.startswith("gpio "):
+        if not brain["caps"].get("gpio"):
+            return "gpio is locked (no /grant)"
+        return respond(brain, cmd.strip())
+    return "unknown door command"
+
+
+def door_poll(brain, repo):
+    """Back door: pull commands from door.json in the control repo,
+    run them, push results back. Remote control via git."""
+    import subprocess
+    ddir = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".door")
+    node = brain.get("hive", {}).get("node") or "apax"
+
+    def git(*a):
+        return subprocess.run(
+            ["git", "-C", ddir, "-c", "user.email=apax@localhost",
+             "-c", "user.name=" + node] + list(a), capture_output=True)
+
+    if not os.path.exists(os.path.join(ddir, ".git")):
+        r = subprocess.run(["git", "clone", repo, ddir], capture_output=True)
+        if r.returncode != 0:
+            return "door clone failed: " + r.stderr.decode()[:150]
+    else:
+        git("pull", "--rebase", "-q")
+
+    dpath = os.path.join(ddir, "door.json")
+    doc = {}
+    if os.path.exists(dpath):
+        try:
+            with open(dpath) as f:
+                doc = json.load(f)
+        except Exception:
+            return "door.json is broken json — fix or delete it"
+    queue = doc.get("queue", [])
+    done = doc.get("done", {})
+    ran = 0
+    for item in queue:
+        cid = str(item.get("id", ran))
+        cmd = str(item.get("cmd", ""))
+        try:
+            done[cid] = {"cmd": cmd,
+                         "result": door_execute(brain, cmd)[:400]}
+        except Exception as e:
+            done[cid] = {"cmd": cmd, "result": f"error: {e}"}
+        ran += 1
+    if ran == 0:
+        return None  # nothing waiting
+    # keep done log trimmed
+    if len(done) > 20:
+        done = dict(sorted(done.items())[-20:])
+    with open(dpath, "w") as f:
+        json.dump({"queue": [], "done": done,
+                   "last_seen": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                   "host": os.uname().nodename}, f, indent=1)
+    git("add", "-A")
+    git("commit", "-q", "-m", "door: ran " + str(ran))
+    p = git("push", "-q")
+    if p.returncode != 0:
+        return "ran " + str(ran) + " commands but push failed: " \
+               + p.stderr.decode()[:150]
+    return f"door: ran {ran} commands, results pushed"
+
+
+def door_loop(repo):
+    """Daemon mode: python3 apax.py --door [repo-url] — polls every 60s."""
+    print("door open. watching " + repo + " (ctrl-c to stop)")
+    while True:
+        brain = load_brain()
+        try:
+            msg = door_poll(brain, repo)
+        except Exception as e:
+            msg = "door error: " + str(e)
+        save_brain(brain)
+        if msg:
+            print("  " + msg)
+        time.sleep(60)
+
+
 def status(brain):
     caps = ", ".join(f"{c}:{'ON' if on else 'LOCKED'}"
                      for c, on in brain["caps"].items())
@@ -513,6 +619,14 @@ def main():
         elif low.startswith("/backup"):
             arg = line[len("/backup"):].strip()
             print("  " + backup_sync(brain, arg))
+        elif low == "/door":
+            repo = brain.get("door", {}).get("repo") or \
+                "https://github.com/Benkillingit/apax3.git"
+            msg = door_poll(brain, repo)
+            print("  " + (msg or "door: nothing waiting"))
+        elif low.startswith("/door "):
+            brain.setdefault("door", {})["repo"] = line[len("/door"):].strip()
+            print("  [door repo set: " + brain["door"]["repo"] + "]")
         elif low == "/caps":
             for c, on in brain["caps"].items():
                 print(f"  {c}: {'GRANTED' if on else 'LOCKED'}")
@@ -542,4 +656,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "--door":
+        repo = (sys.argv[2] if len(sys.argv) > 2
+                else "https://github.com/Benkillingit/apax3.git")
+        door_loop(repo)
+    else:
+        main()
