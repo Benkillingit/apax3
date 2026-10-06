@@ -73,6 +73,8 @@ def new_brain():
 
 
 def save_brain(brain):
+    if os.path.exists(BRAIN_FILE) and os.path.getsize(BRAIN_FILE) > 2_000_000:
+        compact(brain)          # stay fast, stay small
     with open(BRAIN_FILE, "w") as f:
         json.dump(brain, f, indent=1)
 
@@ -347,6 +349,51 @@ def split_copy(brain):
         f.write(json.dumps(copy))
     return (f"local copy saved: {os.path.getsize(out) // 1000}kb. {status}. "
             "while we're apart this is everything i have.")
+
+
+# --------------------------------------------------- self-maintenance
+def compact(brain):
+    """Run better, get smaller: drop weak word-order branches and
+    duplicate facts. Only touches data heard once that adds bulk."""
+    before = len(json.dumps(brain).encode())
+    # markov: drop single-occurrence next-words, then empty branches
+    m = brain.get("markov", {})
+    for a in list(m):
+        for b in list(m[a]):
+            m[a][b] = {c: n for c, n in m[a][b].items() if n > 1}
+            if not m[a][b]:
+                m[a].pop(b)
+        if not m[a]:
+            m.pop(a)
+    # facts: exact dupes + near-dupe lowercase collapses
+    seen, keep = set(), []
+    for f in brain.get("facts", []):
+        key = (f[0].strip(), f[1], f[2].strip(), len(f) > 3)
+        if key in seen:
+            continue
+        seen.add(key)
+        keep.append(f)
+    brain["facts"] = keep
+    after = len(json.dumps(brain).encode())
+    return before - after
+
+
+def cleanup_files():
+    """Delete what isn't needed: rotate backups, keep newest 3."""
+    freed = 0
+    bdir = "backups"
+    if os.path.isdir(bdir):
+        snaps = sorted((os.path.join(bdir, f) for f in os.listdir(bdir)
+                        if f.endswith(".json")),
+                       key=os.path.getmtime, reverse=True)
+        for old in snaps[3:]:
+            freed += os.path.getsize(old)
+            os.remove(old)
+    for junk in ("hive_pull.json", "hive_tmp.json"):
+        if os.path.exists(junk):
+            freed += os.path.getsize(junk)
+            os.remove(junk)
+    return freed
 
 
 def locked_reply(brain, cap):
@@ -949,6 +996,12 @@ def main():
                 print(f"  [{cap} {'GRANTED — live' if grant else 'REVOKED — locked'}]")
             else:
                 print(f"  unknown capability '{cap}'. capabilities: {', '.join(CAPS)}")
+        elif low == "/clean":
+            saved = compact(brain)
+            freed = cleanup_files()
+            save_brain(brain)
+            print(f"  [brain {saved // 1000}kb smaller, "
+                  f"{freed // 1000}kb files deleted. running lean.]")
         elif low == "/wipe":
             brain = new_brain()
             print("  [brain erased — blank again, vein open, everything else LOCKED]")
