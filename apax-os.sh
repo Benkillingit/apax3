@@ -86,4 +86,22 @@ DESK
     chmod +x ~/Desktop/apax-ui.desktop 2>/dev/null || true
 fi
 
+# 5. apax daemon — background janitor, fixes what's his to fix
+if ask "install the APAX daemon? (compacts brain, cleans files, watches disk, every 30min)"; then
+    mkdir -p ~/.config/systemd/user
+    cat > ~/.config/systemd/user/apax-daemon.service <<SVC
+[Unit]
+Description=APAX background janitor
+[Service]
+ExecStart=/usr/bin/python3 $(pwd)/apax.py --daemon
+Restart=always
+[Install]
+WantedBy=default.target
+SVC
+    systemctl --user daemon-reload
+    sudo loginctl enable-linger $USER 2>/dev/null || echo "[apax os] linger failed - daemon runs while logged in only"
+    systemctl --user enable --now apax-daemon
+    echo "[apax os] daemon live. log: apax-daemon.log"
+fi
+
 echo "[apax os] done. reboot to see it."
