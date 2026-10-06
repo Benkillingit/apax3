@@ -25,6 +25,7 @@ Run:  python3 apax.py        (Raspberry Pi 3 / Pi OS, pure stdlib)
 import json
 import os
 import random
+import time
 import re
 
 BRAIN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -400,47 +401,18 @@ def hive_sync(brain):
 
 
 
-def backup_sync(brain, arg):
-    """Push the ENTIRE brain (all data, private included) to a GitHub repo
-    the user connected. Hive shares knowledge; backup saves everything."""
-    import subprocess
-    repo = arg.strip() or brain.get("backup", {}).get("repo")
-    if not repo:
-        return "usage: /backup <your-github-repo-url>  (first time sets it)"
-    brain.setdefault("backup", {})["repo"] = repo
-    bdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".backup")
-    node = brain.get("hive", {}).get("node") or "apax"
-
-    def git(*a):
-        return subprocess.run(
-            ["git", "-C", bdir, "-c", "user.email=apax@localhost",
-             "-c", "user.name=" + node] + list(a), capture_output=True)
-
-    if not os.path.exists(os.path.join(bdir, ".git")):
-        r = subprocess.run(["git", "clone", repo, bdir], capture_output=True)
-        if r.returncode != 0:
-            return ("clone failed: " + r.stderr.decode()[:200]
-                    + " — is your github account connected to this repo?")
-    else:
-        git("pull", "--rebase", "-q")
-
-    brain_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                              "apax_brain.json")
-    with open(brain_path) as f:
-        raw = f.read()
-    with open(os.path.join(bdir, "apax_brain.json"), "w") as f:
-        f.write(raw)
-    git("add", "-A")
-    git("commit", "-q", "-m", "brain backup")
-    p = git("push", "-q")
-    if p.returncode != 0:
-        err = p.stderr.decode()
-        if "Authentication" in err or "403" in err or "could not read" in err:
-            return ("push blocked: your github isn't connected on this "
-                    "machine. run: gh auth login  (or add a git "
-                    "credential helper with a personal access token)")
-        return "push failed: " + err[:200]
-    return "backup complete. full brain pushed to " + repo
+def backup_sync(brain):
+    """Full brain backup, saved LOCALLY (no cloud). Timestamped copies,
+    newest kept in backups/. Roll your own sync later if you ever want."""
+    import shutil
+    here = os.path.dirname(os.path.abspath(__file__))
+    bdir = os.path.join(here, "backups")
+    os.makedirs(bdir, exist_ok=True)
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    dest = os.path.join(bdir, f"apax_brain_{stamp}.json")
+    shutil.copy2(os.path.join(here, "apax_brain.json"), dest)
+    n = len([f for f in os.listdir(bdir) if f.endswith(".json")])
+    return f"backup complete: {dest}  ({n} saved)"
 
 
 def status(brain):
@@ -497,9 +469,8 @@ def main():
                       f"{'ON' if brain['caps'].get('hive') else 'LOCKED'}")
             else:
                 print("  usage: /hive join <repo-url> | /hive sync | /hive status")
-        elif low.startswith("/backup"):
-            arg = line[len("/backup"):].strip()
-            print("  " + backup_sync(brain, arg))
+        elif low == "/backup":
+            print("  " + backup_sync(brain))
         elif low == "/caps":
             for c, on in brain["caps"].items():
                 print(f"  {c}: {'GRANTED' if on else 'LOCKED'}")
