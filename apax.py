@@ -304,6 +304,51 @@ def cap_ask(brain, name, prompt):
         return f"couldn't reach {name}: {type(e).__name__}"
 
 
+def free_bytes(path="."):
+    """Disk space available near the brain, best-effort cross-platform."""
+    try:
+        st = os.statvfs(os.path.dirname(os.path.abspath(path)) or ".")
+        return st.f_bavail * st.f_frsize
+    except AttributeError:                       # windows
+        import shutil
+        return shutil.disk_usage(".").free
+
+
+def split_copy(brain):
+    """Separation: local keeps a copy of everything we learned together,
+    trimmed to what the disk can actually hold."""
+    budget = max(200_000, int(free_bytes(BRAIN_FILE) * 0.8))
+    copy = {k: v for k, v in brain.items()
+            if k not in ("caps", "mode", "hive")}   # knowledge only
+    def size(obj):
+        return len(json.dumps(obj).encode())
+    if size(copy) <= budget:
+        status = "everything fits"
+    else:
+        # too big: drop low-value markov branches until it fits
+        m = dict(copy.get("markov", {}))
+        for key in sorted(m, key=lambda k: sum(
+                sum(c.values()) for c in m[k].values())):
+            if size(copy) <= budget:
+                break
+            m.pop(key, None)
+        copy["markov"] = m
+        if size(copy) > budget:                    # still too big: slice vocab
+            copy["vocab"] = dict(sorted(
+                copy["vocab"].items(), key=lambda kv: -kv[1]))
+            while copy["vocab"] and size(copy) > budget:
+                copy["vocab"].popitem()
+            status = f"trimmed to fit {budget // 1000}kb: kept the strongest words and word order"
+        else:
+            status = f"trimmed weak word-order data to fit {budget // 1000}kb"
+    out = os.path.join(os.path.dirname(os.path.abspath(BRAIN_FILE)),
+                       "local_knowledge.json")
+    with open(out, "w") as f:
+        f.write(json.dumps(copy))
+    return (f"local copy saved: {os.path.getsize(out) // 1000}kb. {status}. "
+            "while we're apart this is everything i have.")
+
+
 def locked_reply(brain, cap):
     return f"'{cap}' is locked. i need your permission: /grant {cap}"
 
@@ -328,9 +373,14 @@ def respond(brain, text):
         return ("web mode. i have full reach now: reading pages, "
                 "asking other ais, running what you granted.")
     if low in ("go local", "local mode", "go offline"):
+        was_web = brain.get("mode", "local") == "web"
         brain["mode"] = "local"
         brain["said"] += 1
-        return "local mode. just you and my brain now. everything i know is stored and mine."
+        msg = ("local mode. just you and my brain now. "
+               "everything i know is stored and mine.")
+        if was_web:
+            msg += "  " + split_copy(brain)
+        return msg
 
     web = brain.get("mode", "local") == "web"
 
