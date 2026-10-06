@@ -316,25 +316,16 @@ def hive_merge(dst, src):
         if w not in dst["vocab"]:
             dst["vocab"][w] = 0; n += 1
         dst["vocab"][w] += c
-    m = dst["markov"]
-    for a, d in src.get("markov", {}).items():
-        for b, e in d.items():
-            for c, cnt in e.items():
-                m.setdefault(a, {}).setdefault(b, {})
-                if c not in m[a][b]:
-                    n += 1
-                m[a][b][c] = m[a][b].get(c, 0) + cnt
     for l in src.get("links", []):
         if l not in dst["links"]:
             dst["links"].append(l); n += 1
-    for q in src.get("questions", {}):
-        if q not in dst["questions"]:
-            dst["questions"][q] = True; n += 1
     return n
 
 
 def hive_snapshot(brain):
-    snap = {k: v for k, v in brain.items() if k not in ("caps", "hive")}
+    # knowledge syncs; personality (markov speech patterns) stays local
+    snap = {k: v for k, v in brain.items()
+            if k not in ("caps", "hive", "markov", "questions")}
     return snap
 
 
