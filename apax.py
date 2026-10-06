@@ -881,10 +881,11 @@ margin:8px 0}
 <script>
 const esc = s => String(s).replace(/[<>&]/g,
   c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+const KEY = new URLSearchParams(location.search).get('k') || '';
 async function api(path, body){
   const r = await fetch(path, {method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify(body || {})});
+    body: JSON.stringify(Object.assign({k: KEY}, body || {}))});
   return r.json();
 }
 async function refresh(){
@@ -925,6 +926,9 @@ refresh();
 
 
 def ui_server(port):
+    kfile = os.path.join(os.path.dirname(
+        os.path.abspath(__file__)), "apax-webkey.txt")
+    KEY = open(kfile).read().strip() if os.path.exists(kfile) else ""
     import threading
     from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
     lock = threading.Lock()
@@ -956,6 +960,9 @@ def ui_server(port):
                 body = json.loads(self.rfile.read(n) or b"{}")
             except Exception:
                 body = {}
+            if KEY and body.get("k") != KEY:
+                self._send({"error": "bad key"}, 403)
+                return
             with lock:
                 brain = load_brain()
                 if self.path == "/api/status":
