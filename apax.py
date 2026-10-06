@@ -86,12 +86,12 @@ def learn_markov(brain, text):
         m[a][b][c] = m[a][b].get(c, 0) + 1
 
 
-def learn_vocab(brain, text):
+def learn_vocab(brain, text, mine=False):
     for w in words(text):
         brain["vocab"][w] = brain["vocab"].get(w, 0) + 1
 
 
-def learn_fact(brain, text):
+def learn_fact(brain, text, mine=False):
     """Pick up simple 'X is Y' / 'X has Y' / 'X can Y' statements."""
     m = re.match(
         r"^(?:the |a |an )?(.+?)\s+(is|are|was|has|have|can|means|"
@@ -101,7 +101,7 @@ def learn_fact(brain, text):
     subj, rel, obj = m.group(1).strip(), m.group(2), m.group(3).strip()
     if subj in ("what", "who", "where", "why", "how"):
         return None
-    fact = [subj, rel, obj]
+    fact = [subj, rel, obj] + (["mine"] if mine else [])
     if fact not in brain["facts"]:
         brain["facts"].append(fact)
     return fact
@@ -110,7 +110,8 @@ def learn_fact(brain, text):
 def recall(brain, text):
     toks = set(words(text))
     hits = []
-    for s, r, o in brain["facts"]:
+    for f in brain["facts"]:
+        s, r, o = f[0], f[1], f[2]
         if s in toks or any(w in toks for w in words(o)):
             hits.append(f"{s} {r} {o}")
     return hits
@@ -231,7 +232,11 @@ def locked_reply(brain, cap):
 
 def respond(brain, text):
     brain["heard"] += 1
-    learn_vocab(brain, text)
+    learn_vocab(brain, text, mine=True)
+    for w in words(text):
+        ow = brain.setdefault("owner_words", [])
+        if w not in ow:
+            ow.append(w)
     learn_markov(brain, text)
 
     # ---- capability requests: gated ----
@@ -272,7 +277,7 @@ def respond(brain, text):
                 "sudo usermod -aG gpio $USER")
 
     # ---- thinking: free, unlimited ----
-    fact = learn_fact(brain, text)
+    fact = learn_fact(brain, text, mine=True)
 
     unknowns = unknown_words(brain, text)
     askable = [w for w in unknowns if w not in brain["questions"]]
@@ -310,6 +315,8 @@ def respond(brain, text):
 def hive_merge(dst, src):
     n = 0
     for f in src.get("facts", []):
+        if len(f) > 3 and f[3] == "mine":
+            continue  # never absorb another node's private/user facts
         if f not in dst["facts"]:
             dst["facts"].append(f); n += 1
     for w, c in src.get("vocab", {}).items():
@@ -325,7 +332,12 @@ def hive_merge(dst, src):
 def hive_snapshot(brain):
     # knowledge syncs; personality (markov speech patterns) stays local
     snap = {k: v for k, v in brain.items()
-            if k not in ("caps", "hive", "markov", "questions")}
+            if k not in ("caps", "hive", "markov", "questions",
+                         "owner_words")}
+    snap["facts"] = [f for f in snap["facts"]
+                     if len(f) == 3 or f[3] != "mine"]
+    snap["vocab"] = {w: c for w, c in snap["vocab"].items()
+                     if w not in brain.get("owner_words", [])}
     return snap
 
 
