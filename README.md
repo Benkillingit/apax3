@@ -76,3 +76,17 @@ gpio pin 17 on
 
 The brain is one JSON file (`apax_brain.json`) next to the script.
 Back it up and your AI moves to any machine.
+
+## Android (any phone/tablet)
+APAX runs the exact same file on Android via Termux — no APK build needed,
+the compiled-APK path would just be a wrapper around this.
+
+1. Install [Termux from F-Droid](https://f-droid.org/en/packages/com.termux/)
+2. In Termux:
+   ```
+   curl -sL https://raw.githubusercontent.com/Benkillingit/apax3/main/install-android.sh | bash
+   ```
+
+Same brain format, same `/grant` gates, same hive and door. \`cmd\` works inside
+Termux (its own sandbox). \`gpio\` obviously doesn't — phones don't have pins.
+The web UI works at localhost:8080 in any mobile browser.
