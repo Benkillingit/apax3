@@ -1,0 +1,20 @@
+{
+  "os_list": {
+    "name": "APAX OS",
+    "description": "Windows-style Pi 3 OS with the APAX brain. Flash this, boot, run the one-line installer.",
+    "icon": "https://raw.githubusercontent.com/Benkillingit/apax3/main/apax-logo.png",
+    "items": [
+      {
+        "name": "APAX OS (Pi 3 / Pi Zero 2)",
+        "description": "Base image = Raspberry Pi OS Lite (32-bit). After first boot: cd ~ && git clone https://github.com/Benkillingit/apax3.git && bash apax3/apax-os.sh — turns it into APAX OS (windows-style desktop, app translator, max video, APAX daemon).",
+        "icon": "https://raw.githubusercontent.com/Benkillingit/apax3/main/apax-logo.png",
+        "url": "https://downloads.raspberrypi.com/raspios_lite_armhf_latest",
+        "release_date": "2026-10-05",
+        "image_download_size": 512000000,
+        "extract_size": 2500000000,
+        "init_format": "systemd",
+        "recommended": true
+      }
+    ]
+  }
+}
