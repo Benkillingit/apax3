@@ -90,3 +90,12 @@ the compiled-APK path would just be a wrapper around this.
 Same brain format, same `/grant` gates, same hive and door. \`cmd\` works inside
 Termux (its own sandbox). \`gpio\` obviously doesn't — phones don't have pins.
 The web UI works at localhost:8080 in any mobile browser.
+
+## Flash with Raspberry Pi Imager
+
+1. On your PC, run Raspberry Pi Imager with the APAX OS list (choose OS -> APAX OS):
+   - Linux: `rpi-imager --repo https://raw.githubusercontent.com/Benkillingit/apax3/main/apax-os-list.json`
+   - Windows: right-click the Imager shortcut -> Properties, add to Target: ` --repo https://raw.githubusercontent.com/Benkillingit/apax3/main/apax-os-list.json`
+2. Pick your SD card, write. (Ctrl+Shift+X = enable SSH/wifi if you want headless)
+3. Boot the Pi, then the one line that makes it APAX OS:
+   `cd ~ && git clone https://github.com/Benkillingit/apax3.git && bash apax3/apax-os.sh`
