@@ -405,6 +405,31 @@ def daemon():
     log = "apax-daemon.log"
     while True:
         brain = load_brain()
+        # --- always adapting: watch what ben actually does ---
+        watched = ("retroarch", "kodi", "mpv", "chromium", "wine",
+                   "steam", "pcsx", "mupen", "dosbox", "minecraft")
+        app = None
+        try:
+            import subprocess
+            ps = subprocess.run(["ps", "-eo", "comm"],
+                                capture_output=True, text=True).stdout
+            app = next((w for w in watched if w in ps), None)
+        except Exception:
+            pass
+        habits = brain.setdefault("habits", {})
+        if app:
+            habits[app] = habits.get(app, 30) + 30
+            knows = any(app in f for f in brain["facts"])
+            if not knows:
+                brain["facts"].append(f"ben uses {app} on the pi")
+                brain["pending_q"] = ("you started using " + app +
+                                     " - what is it for? tell me")
+                try:
+                    import subprocess
+                    subprocess.run(["notify-send", "APAX asks",
+                                    brain["pending_q"]], timeout=10)
+                except Exception:
+                    pass
         save_brain(brain)          # save_brain auto-compacts when big
         freed = cleanup_files()
         du = shutil.disk_usage(os.path.dirname(os.path.abspath(__file__)))
@@ -913,6 +938,10 @@ def ui_server(port):
                            "reads": brain.get("reads", 0),
                            "caps": caps,
                            "fact_list": brain["facts"][-30:]}
+                elif self.path == "/api/ask":
+                    reply = respond(brain, str(body.get("text", "")))
+                    brain["said"] = brain.get("said", 0) + 1
+                    out = {"reply": reply or "(listening...)"}
                 elif self.path == "/api/say":
                     reply = respond(brain, str(body.get("text", "")))
                     out = {"reply": reply or "(listening...)"}
