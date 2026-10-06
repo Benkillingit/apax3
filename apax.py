@@ -1,0 +1,368 @@
+#!/usr/bin/env python3
+"""
+APAX 3.0 — an AI that starts with nothing.
+
+No rules. No directives. No model. No seed text. No vocabulary.
+Nothing is baked in except the ability to THINK: notice, ask,
+remember, imitate — using as much RAM and CPU as it wants.
+
+Capabilities, and their state at birth:
+
+    internet   GRANTED at birth, read-only — its one vein to the world.
+               It doesn't know any URL or web word at first; you give
+               it a page and it learns language by reading, then finds
+               more pages on its own. It can never write outward.
+    cmd        LOCKED. run shell commands. /grant cmd
+    gpio       LOCKED. control Pi pins. /grant gpio
+
+Anything locked stays locked until the owner grants it, and it has
+to LEARN each capability first anyway — it doesn't even know what
+"cmd" means until you teach it the word.
+
+Run:  python3 apax.py        (Raspberry Pi 3 / Pi OS, pure stdlib)
+"""
+
+import json
+import os
+import random
+import re
+
+BRAIN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "apax_brain.json")
+
+STOP = re.compile(r"[^a-z0-9' ]")
+TAG = re.compile(r"<[^>]+>")
+HREF = re.compile(r'href=["\']([^"\']+)', re.I)
+PIN_RE = re.compile(r"pin\s*(\d+)\s*(on|off|high|low)")
+URL_RE = re.compile(r"https?://\S+", re.I)
+RUN_RE = re.compile(r"^run\s+(.+)$", re.I)
+
+CAPS = ("internet", "cmd", "gpio")
+
+
+# ---------------------------------------------------------------- brain io
+
+def load_brain():
+    if not os.path.exists(BRAIN_FILE):
+        return new_brain()
+    with open(BRAIN_FILE, "r") as f:
+        return json.load(f)
+
+
+def new_brain():
+    # starts with NOTHING — no words, no facts, no rules.
+    # one exception: the read-only vein is open at birth.
+    return {
+        "facts": [],            # [subject, relation, object]
+        "markov": {},           # word order it has heard (grows unbounded)
+        "vocab": {},            # word -> times seen
+        "questions": {},        # words it has asked about
+        "caps": {"internet": True, "cmd": False, "gpio": False},
+        "links": [],            # urls discovered while reading
+        "reads": 0,
+        "heard": 0,
+        "said": 0,
+    }
+
+
+def save_brain(brain):
+    with open(BRAIN_FILE, "w") as f:
+        json.dump(brain, f, indent=1)
+
+
+# ---------------------------------------------------------------- thinking
+# Free and unlimited — its inborn ability. No permission ever needed.
+
+def words(text):
+    return STOP.sub(" ", text.lower()).split()
+
+
+def learn_markov(brain, text):
+    toks = ["<start>"] + words(text) + ["<end>"]
+    m = brain["markov"]
+    for a, b, c in zip(toks, toks[1:], toks[2:]):
+        m.setdefault(a, {}).setdefault(b, {})
+        m[a][b][c] = m[a][b].get(c, 0) + 1
+
+
+def learn_vocab(brain, text):
+    for w in words(text):
+        brain["vocab"][w] = brain["vocab"].get(w, 0) + 1
+
+
+def learn_fact(brain, text):
+    """Pick up simple 'X is Y' / 'X has Y' / 'X can Y' statements."""
+    m = re.match(
+        r"^(?:the |a |an )?(.+?)\s+(is|are|was|has|have|can|means|"
+        r"likes|like)\s+(.+)$", text.lower().strip().strip(".!?"))
+    if not m:
+        return None
+    subj, rel, obj = m.group(1).strip(), m.group(2), m.group(3).strip()
+    if subj in ("what", "who", "where", "why", "how"):
+        return None
+    fact = [subj, rel, obj]
+    if fact not in brain["facts"]:
+        brain["facts"].append(fact)
+    return fact
+
+
+def recall(brain, text):
+    toks = set(words(text))
+    hits = []
+    for s, r, o in brain["facts"]:
+        if s in toks or any(w in toks for w in words(o)):
+            hits.append(f"{s} {r} {o}")
+    return hits
+
+
+def unknown_words(brain, text):
+    return [w for w in words(text) if w not in brain["vocab"]]
+
+
+def generate(brain, seed=None):
+    """Speak using only word orders it has heard (order-2 chain)."""
+    m = brain["markov"]
+    if not m or "<start>" not in m:
+        return None
+    firsts = m["<start>"]
+    if seed and seed in firsts:
+        cur = seed
+    else:
+        cur = weighted({k: sum(v.values()) for k, v in firsts.items()})
+    nxt = weighted(firsts.get(cur, {"<end>": 1}))
+    out = []
+    while nxt != "<end>" and len(out) < 80:
+        out.append(nxt)
+        table = m.get(cur, {}).get(nxt)
+        if not table:
+            break
+        cur, nxt = nxt, weighted(table)
+    return " ".join(out) if out else None
+
+
+def weighted(counts):
+    items = list(counts.items())
+    total = sum(c for _, c in items)
+    r = random.uniform(0, total)
+    acc = 0
+    for w, c in items:
+        acc += c
+        if r <= acc:
+            return w
+    return items[-1][0]
+
+
+# ---------------------------------------------------------------- capabilities
+
+def cap_internet_read(brain, url):
+    import urllib.request
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "apax/1"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            html = r.read(500000).decode("utf-8", "replace")
+    except Exception as e:
+        return f"the vein found nothing: {e}"
+
+    html = re.sub(r"<(style|script)[^>]*>.*?</\1>", " ", html,
+                  flags=re.S | re.I)
+    body = re.sub(r"\s+", " ", TAG.sub(" ", html)).strip()
+    if not body:
+        return "the page said nothing."
+
+    # LEARN from what it reads — words, word order, facts
+    learn_vocab(brain, body)
+    learn_markov(brain, body)
+    for chunk in re.findall(r"[^.!?]{10,300}[.!?]", body):
+        learn_fact(brain, chunk)
+
+    # discover links — new veins, remembered
+    base = url.rsplit("/", 1)[0]
+    found = 0
+    for href in HREF.findall(html):
+        if href.startswith("//"):
+            href = "https:" + href
+        elif href.startswith("/"):
+            href = base + href
+        if href.startswith("http") and href not in brain["links"]:
+            brain["links"].append(href)
+            found += 1
+
+    brain["reads"] += 1
+    text = body[:300]
+    reply = f"i read it. it said: {text}" + ("..." if len(body) > 300 else "")
+    if found:
+        reply += f"  [found {found} new pages]"
+    return reply
+
+
+def cap_cmd_run(brain, cmd):
+    import subprocess
+    try:
+        out = subprocess.run(cmd, shell=True, capture_output=True,
+                             timeout=30)
+        txt = (out.stdout + out.stderr).decode("utf-8", "replace")
+        return (txt.replace("\n", " ")[:500] or "(no output)") + \
+               f"  [exit {out.returncode}]"
+    except Exception as e:
+        return f"command failed: {e}"
+
+
+def cap_gpio_set(pin, state):
+    path = "/sys/class/gpio"
+    try:
+        if not os.path.exists(f"{path}/gpio{pin}"):
+            with open(f"{path}/export", "w") as f:
+                f.write(str(pin))
+            with open(f"{path}/gpio{pin}/direction", "w") as f:
+                f.write("out")
+        with open(f"{path}/gpio{pin}/value", "w") as f:
+            f.write("1" if state in ("on", "high") else "0")
+        return True
+    except (OSError, PermissionError):
+        return False
+
+
+def locked_reply(brain, cap):
+    return f"'{cap}' is locked. i need your permission: /grant {cap}"
+
+
+# ---------------------------------------------------------------- conversation
+
+def respond(brain, text):
+    brain["heard"] += 1
+    learn_vocab(brain, text)
+    learn_markov(brain, text)
+
+    # ---- capability requests: gated ----
+    m = re.search(r"read\s+(https?://\S+)", text, re.I)
+    if m:
+        brain["said"] += 1
+        if not brain["caps"].get("internet"):
+            return locked_reply(brain, "internet")
+        return cap_internet_read(brain, m.group(1))
+
+    if re.match(r"^\s*(read more|read another)\b", text.lower()):
+        brain["said"] += 1
+        if not brain["caps"].get("internet"):
+            return locked_reply(brain, "internet")
+        if not brain["links"]:
+            return "no pages discovered yet. read a page first."
+        return "following... " + cap_internet_read(brain,
+                                                  brain["links"].pop(0))
+
+    m = RUN_RE.search(text.strip())
+    if m and "run" in words(text):
+        brain["said"] += 1
+        if not brain["caps"].get("cmd"):
+            return locked_reply(brain, "cmd")
+        return cap_cmd_run(brain, m.group(1))
+
+    m = PIN_RE.search(text.lower())
+    if m or {"pin", "gpio", "led"} & set(words(text)):
+        brain["said"] += 1
+        if not brain["caps"].get("gpio"):
+            return locked_reply(brain, "gpio")
+        if not m:
+            return "tell me: pin <number> on/off"
+        pin, state = int(m.group(1)), m.group(2)
+        if cap_gpio_set(pin, state):
+            return f"pin {pin} {state}."
+        return ("couldn't reach the gpio. run me with sudo, or: "
+                "sudo usermod -aG gpio $USER")
+
+    # ---- thinking: free, unlimited ----
+    fact = learn_fact(brain, text)
+
+    unknowns = unknown_words(brain, text)
+    askable = [w for w in unknowns if w not in brain["questions"]]
+    if askable:
+        w = askable[0]
+        brain["questions"][w] = True
+        return f"what is {w}?"
+
+    if fact and brain["said"] < 20 and random.random() < 0.5:
+        return "ok."
+
+    hits = recall(brain, text)
+    if hits and random.random() < 0.5:
+        return random.choice(hits) + "."
+
+    seed = None
+    toks = words(text)
+    known = [w for w in toks if w in brain["markov"].get("<start>", {})]
+    if known:
+        seed = random.choice(known)
+    sentence = generate(brain, seed)
+    if sentence:
+        brain["said"] += 1
+        return sentence + "."
+
+    return None  # silent until it has material to think with
+
+
+def status(brain):
+    caps = ", ".join(f"{c}:{'ON' if on else 'LOCKED'}"
+                     for c, on in brain["caps"].items())
+    return (f"words: {len(brain['vocab'])}  facts: {len(brain['facts'])}  "
+            f"questions: {len(brain['questions'])}  "
+            f"heard: {brain['heard']}  said: {brain['said']}  "
+            f"reads: {brain['reads']}  links: {len(brain['links'])}  "
+            f"[{caps}]")
+
+
+def main():
+    brain = load_brain()
+    fresh = not os.path.exists(BRAIN_FILE)
+    if fresh:
+        save_brain(brain)
+    print("[apax — born blank. one vein open: reading. everything else LOCKED]"
+          if fresh else f"[apax — {status(brain)}]")
+
+    while True:
+        try:
+            line = input("you> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n[brain saved]")
+            break
+        if not line:
+            continue
+        save = True
+        low = line.lower()
+        if low == "/quit":
+            break
+        elif low == "/stats":
+            print(f"  {status(brain)}")
+            save = False
+        elif low == "/brain":
+            print(json.dumps(brain, indent=1)[:3000])
+            save = False
+        elif low == "/caps":
+            for c, on in brain["caps"].items():
+                print(f"  {c}: {'GRANTED' if on else 'LOCKED'}")
+        elif low.startswith("/grant ") or low.startswith("/revoke "):
+            cap = low.split()[1] if len(low.split()) > 1 else ""
+            grant = low.startswith("/grant")
+            if cap in brain["caps"]:
+                brain["caps"][cap] = grant
+                print(f"  [{cap} {'GRANTED — live' if grant else 'REVOKED — locked'}]")
+            else:
+                print(f"  unknown capability '{cap}'. capabilities: {', '.join(CAPS)}")
+        elif low == "/wipe":
+            brain = new_brain()
+            print("  [brain erased — blank again, vein open, everything else LOCKED]")
+        elif low.startswith("/forget "):
+            w = line[8:].lower().strip()
+            brain["vocab"].pop(w, None)
+            brain["questions"].pop(w, None)
+            brain["facts"] = [f for f in brain["facts"] if w not in f]
+            print(f"  [forgot {w}]")
+        else:
+            reply = respond(brain, line)
+            print(f"apax> {reply}" if reply else "apax> ...")
+        if save:
+            save_brain(brain)
+    save_brain(brain)
+
+
+if __name__ == "__main__":
+    main()
