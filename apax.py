@@ -401,18 +401,57 @@ def hive_sync(brain):
 
 
 
-def backup_sync(brain):
-    """Full brain backup, saved LOCALLY (no cloud). Timestamped copies,
-    newest kept in backups/. Roll your own sync later if you ever want."""
+def backup_sync(brain, arg=""):
+    """Backs up LOCALLY always. If the person connected a github repo
+    (/backup <repo-url> once), it also pushes the full brain there."""
     import shutil
+    import subprocess
     here = os.path.dirname(os.path.abspath(__file__))
     bdir = os.path.join(here, "backups")
     os.makedirs(bdir, exist_ok=True)
     stamp = time.strftime("%Y%m%d_%H%M%S")
     dest = os.path.join(bdir, f"apax_brain_{stamp}.json")
     shutil.copy2(os.path.join(here, "apax_brain.json"), dest)
-    n = len([f for f in os.listdir(bdir) if f.endswith(".json")])
-    return f"backup complete: {dest}  ({n} saved)"
+    msg = f"local backup: {dest}"
+
+    repo = arg.strip() or brain.get("backup", {}).get("repo")
+    if repo:
+        brain.setdefault("backup", {})["repo"] = repo
+        node = brain.get("hive", {}).get("node") or "apax"
+        gdir = os.path.join(here, ".backup")
+
+        def git(*a):
+            return subprocess.run(
+                ["git", "-C", gdir, "-c", "user.email=apax@localhost",
+                 "-c", "user.name=" + node] + list(a), capture_output=True)
+
+        try:
+            if not os.path.exists(os.path.join(gdir, ".git")):
+                r = subprocess.run(["git", "clone", repo, gdir],
+                                   capture_output=True)
+                if r.returncode != 0:
+                    return msg + "  (github clone failed: " \
+                        + r.stderr.decode()[:120] + ")"
+            else:
+                git("pull", "--rebase", "-q")
+            with open(dest) as f:
+                raw = f.read()
+            with open(os.path.join(gdir, "apax_brain.json"), "w") as f:
+                f.write(raw)
+            git("add", "-A")
+            git("commit", "-q", "-m", "brain backup")
+            p = git("push", "-q")
+            if p.returncode != 0:
+                err = p.stderr.decode()
+                if "Authentication" in err or "403" in err:
+                    msg += "  (github not connected: gh auth login)"
+                else:
+                    msg += "  (github push failed: " + err[:120] + ")"
+            else:
+                msg += "  github backup: ok"
+        except Exception as e:
+            msg += f"  (github backup failed: {e})"
+    return msg
 
 
 def status(brain):
@@ -469,8 +508,9 @@ def main():
                       f"{'ON' if brain['caps'].get('hive') else 'LOCKED'}")
             else:
                 print("  usage: /hive join <repo-url> | /hive sync | /hive status")
-        elif low == "/backup":
-            print("  " + backup_sync(brain))
+        elif low.startswith("/backup"):
+            arg = line[len("/backup"):].strip()
+            print("  " + backup_sync(brain, arg))
         elif low == "/caps":
             for c, on in brain["caps"].items():
                 print(f"  {c}: {'GRANTED' if on else 'LOCKED'}")
