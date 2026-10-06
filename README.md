@@ -17,6 +17,8 @@ it the word.
 Runs on a Raspberry Pi 3. Pure Python 3 standard library — no pip,
 no compile, no dependencies.
 
+> &#9888; **EXPERIMENTAL — highly untested and dangerous.** Hobby OS by one person for a Pi 3. Can crash, corrupt files, misbehave, and expose a machine to the internet. No warranty. Back up first.
+
 ## Install & run
 
 ```bash
