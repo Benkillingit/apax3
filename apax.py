@@ -27,6 +27,8 @@ import os
 import random
 import time
 import re
+import urllib.request
+import urllib.error
 
 BRAIN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "apax_brain.json")
@@ -58,7 +60,8 @@ def new_brain():
         "markov": {},           # word order it has heard (grows unbounded)
         "vocab": {},            # word -> times seen
         "questions": {},        # words it has asked about
-        "caps": {"internet": True, "cmd": False, "gpio": False, "hive": False},
+        "caps": {"internet": True, "ask": False, "cmd": False,
+                  "gpio": False, "hive": False},
         "hive": {"repo": "", "node": ""},
         "backup": {"repo": ""},
         "links": [],            # urls discovered while reading
@@ -226,6 +229,80 @@ def cap_gpio_set(pin, state):
         return False
 
 
+# ------------------------------------------------------- ai veins
+# One protocol, many minds: any OpenAI-compatible endpoint plus
+# native Gemini. Keys live in env vars (APAX_<NAME>_KEY), never here.
+BACKENDS = {
+    "gemini":  {"kind": "gemini", "model": "gemini-3.6-flash",
+                "key_env": "APAX_GEMINI_KEY"},
+    "grok":    {"kind": "openai",
+                "url": "https://api.x.ai/v1/chat/completions",
+                "model": "grok-3-mini", "key_env": "APAX_XAI_KEY"},
+    "chatgpt": {"kind": "openai",
+                "url": "https://api.openai.com/v1/chat/completions",
+                "model": "gpt-4o-mini", "key_env": "APAX_OPENAI_KEY"},
+    "mistral": {"kind": "openai",
+                "url": "https://api.mistral.ai/v1/chat/completions",
+                "model": "mistral-small-latest",
+                "key_env": "APAX_MISTRAL_KEY"},
+    "deepseek": {"kind": "openai",
+                 "url": "https://api.deepseek.com/chat/completions",
+                 "model": "deepseek-chat",
+                 "key_env": "APAX_DEEPSEEK_KEY"},
+    "together": {"kind": "openai",
+                 "url": "https://api.together.xyz/v1/chat/completions",
+                 "model": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+                 "key_env": "APAX_TOGETHER_KEY"},
+    "ollama":  {"kind": "openai",
+                 "url": "http://localhost:11434/v1/chat/completions",
+                 "model": "llama3.2", "key_env": None},
+    "lmstudio": {"kind": "openai",
+                 "url": "http://localhost:1234/v1/chat/completions",
+                 "model": "local-model", "key_env": None},
+}
+ASK_RE = re.compile(r"^ask\s+(\w+)\s+(.+)$", re.I)
+
+
+def cap_ask(brain, name, prompt):
+    b = BACKENDS.get(name.lower())
+    if not b:
+        return "i don't know that mind. try: " + " ".join(sorted(BACKENDS))
+    key = os.environ.get(b["key_env"], "") if b["key_env"] else ""
+    if b["key_env"] and not key:
+        return f"set the key first: export {b['key_env']}=<key>"
+    try:
+        if b["kind"] == "gemini":
+            data = json.dumps({"contents": [{
+                "parts": [{"text": prompt}]}]}).encode()
+            req = urllib.request.Request(
+                "https://generativelanguage.googleapis.com/v1beta/models/"
+                f"{b['model']}:generateContent?key={key}",
+                data=data, headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=60) as r:
+                out = json.load(r)["candidates"][0]["content"] \
+                    ["parts"][0]["text"]
+        else:
+            data = json.dumps({"model": b["model"], "temperature": 0.7,
+                "messages": [{"role": "user",
+                              "content": prompt}]}).encode()
+            req = urllib.request.Request(b["url"], data=data, headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {key}",
+                "User-Agent": "APAX/3.0"})
+            with urllib.request.urlopen(req, timeout=60) as r:
+                out = json.load(r)["choices"][0]["message"]["content"]
+        learn_vocab(brain, out)
+        learn_markov(brain, out)
+        for chunk in re.split(r"(?<=[.!?])\s+", out):
+            learn_fact(brain, chunk)
+        brain["reads"] = brain.get("reads", 0) + 1
+        return out[:600]
+    except urllib.error.HTTPError as e:
+        return f"{name} said no: http {e.code}"
+    except Exception as e:
+        return f"couldn't reach {name}: {type(e).__name__}"
+
+
 def locked_reply(brain, cap):
     return f"'{cap}' is locked. i need your permission: /grant {cap}"
 
@@ -242,6 +319,13 @@ def respond(brain, text):
     learn_markov(brain, text)
 
     # ---- capability requests: gated ----
+    m = ASK_RE.match(text.strip())
+    if m:
+        brain["said"] += 1
+        if not brain["caps"].get("ask"):
+            return locked_reply(brain, "ask")
+        return cap_ask(brain, m.group(1), m.group(2))
+
     m = re.search(r"read\s+(https?://\S+)", text, re.I)
     if m:
         brain["said"] += 1
@@ -586,8 +670,8 @@ margin:8px 0}
 <div class="row"><input id="txt" placeholder="say something" size="46">
 <button onclick="say()">send</button></div>
 <div class="row"><label>capabilities</label>
-<select id="cap"><option>cmd</option><option>gpio</option>
-<option>internet</option><option>hive</option></select>
+<select id="cap"><option>ask</option><option>cmd</option>
+<option>gpio</option><option>internet</option><option>hive</option></select>
 <button onclick="cap(1)">grant</button>
 <button onclick="cap(0)">revoke</button></div>
 <div class="row"><label>maintenance</label>
