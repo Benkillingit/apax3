@@ -1,0 +1,94 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>APAX — live in your browser</title>
+<style>
+body{margin:0;font-family:Segoe UI,Arial,sans-serif;background:#0b0f14;color:#e8eef2;
+display:flex;flex-direction:column;height:100vh}
+.bar{background:#101820;border-bottom:1px solid #1e2a36;padding:10px 14px;
+display:flex;justify-content:space-between;align-items:center}
+.bar b{color:#7ec8ff}
+.bar .btns button{background:#1a2634;border:1px solid #2a3a4c;color:#a9c8e8;
+border-radius:6px;padding:6px 10px;margin-left:6px;cursor:pointer;font-size:.8rem}
+#chat{flex:1;overflow-y:auto;padding:16px;max-width:760px;margin:0 auto;width:100%}
+.msg{margin:8px 0;padding:8px 12px;border-radius:10px;max-width:80%;
+white-space:pre-wrap;font-size:.95rem}
+.me{background:#1a3a5c;margin-left:auto}
+.ax{background:#101820;border:1px solid #1e2a36}
+.sys{background:#2a1414;border:1px solid #7a2222;color:#ff9b9b;font-size:.85rem}
+#foot{display:flex;padding:10px;gap:8px;background:#101820;border-top:1px solid #1e2a36}
+#txt{flex:1;background:#0b0f14;border:1px solid #2a3a4c;color:#e8eef2;
+border-radius:8px;padding:10px;font-size:1rem}
+#send{background:#1a5c7a;border:none;color:#fff;border-radius:8px;padding:10px 18px;
+cursor:pointer;font-size:1rem}
+.warn{background:#2a1414;border:1px solid #7a2222;color:#ff9b9b;font-size:.8rem;
+padding:6px 10px;margin:0 14px 8px;border-radius:6px}
+</style></head><body>
+<div class="bar"><b>APAX 3.0 — live brain (real code, sandboxed)</b>
+<div class="btns">
+<button onclick="exportBrain()">export brain</button>
+<button onclick="resetBrain()">reset</button>
+<button onclick="location.href='../'">site</button>
+</div></div>
+<div class="warn">&#9888; experimental &mdash; the real OS runs on a Raspberry Pi. this is
+the same brain code, sandboxed: no shell, no gpio, no files, no network. brain stays in
+YOUR browser (localStorage). export it and drop it on a Pi to continue.</div>
+<div id="chat"></div>
+<div id="foot"><input id="txt" placeholder="talk to him. he is born blank — he learns by listening."
+autofocus><button id="send">say</button></div>
+<script type="module">
+const chat = document.getElementById('chat'), txt = document.getElementById('txt');
+let py = null, ready = false;
+function say(text, cls){ const d=document.createElement('div');
+  d.className='msg '+(cls||'ax'); d.textContent=text; chat.appendChild(d);
+  chat.scrollTop = chat.scrollHeight; }
+say("loading the actual apax.py (python compiled for your browser)...", "sys");
+const src = await (await fetch(
+  'https://raw.githubusercontent.com/Benkillingit/apax3/main/apax.py')).text();
+import("https://cdn.jsdelivr.net/pyodide/v0.26.2/full/pyodide.mjs").then(async m => {
+  py = await m.loadPyodide();
+  py.globals.set("APAX_SRC", src);
+  py.runPython(`
+__name__ = "apaxweb"
+__file__ = "/home/pydide/apax.py"
+exec(compile(APAX_SRC, "apax.py", "exec"), globals())
+BRAIN_FILE = "/home/pydide/apax_brain.json"
+import js
+b = localStorage.getItem("apax_web_brain")
+if b:
+    open(BRAIN_FILE, "w").write(b)
+brain = load_brain()
+def web_reply(t):
+    global brain
+    try:
+        r = respond(brain, t)
+    except Exception as e:
+        return "[sandbox wall] i can't do that here: " + str(e)
+    try:
+        open(BRAIN_FILE, "w").write(json.dumps(brain, indent=1))
+        js.localStorage.setItem("apax_web_brain",
+            open(BRAIN_FILE).read())
+    except Exception:
+        pass
+    return r
+`);
+  ready = true;
+  const st = py.runPython(`status(load_brain())`);
+  say("apax here. " + st, "sys");
+  say("(born blank. say things. teach him facts like 'my dog is rocky'. "
+    + "ask him later and watch what he remembers.)");
+});
+function send(){ if(!ready||!txt.value.trim()) return;
+  say(txt.value, "me"); 
+  try { const r = py.runPython(`web_reply(${JSON.stringify(txt.value)})`);
+    if(r) say(r); } catch(e){ say("err: "+e, "sys"); }
+  txt.value=''; }
+document.getElementById('send').onclick = send;
+txt.addEventListener('keydown', e => { if(e.key==='Enter') send(); });
+function exportBrain(){ const b = localStorage.getItem("apax_web_brain");
+  if(!b) return say("brain is empty — talk to him first.", "sys");
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([b],{type:'application/json'}));
+  a.download="apax_brain.json"; a.click(); }
+function resetBrain(){ localStorage.removeItem("apax_web_brain");
+  location.reload(); }
+</script></body></html>
