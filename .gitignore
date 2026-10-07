@@ -1,0 +1,8 @@
+# runtime data -- written next to apax.py by the running app, not source
+apax_brain.json
+apax-webkey.txt
+backups/
+hive_pull.json
+hive_tmp.json
+apax-daemon.log
+__pycache__/
